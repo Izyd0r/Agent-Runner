@@ -8,6 +8,7 @@ import '@mantine/core/styles.css'
 import '@mantine/notifications/styles.css'
 import AuthPage from './AuthPage'
 import Home from './Home'
+import ProjectPage from './ProjectPage'
 import { getToken } from './api'
 
 const theme = createTheme({
@@ -27,6 +28,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Routes>
           <Route path="/auth" element={<AuthPage />} />
           <Route path="/" element={<Protected><Home /></Protected>} />
+          <Route path="/projects/:id" element={<Protected><ProjectPage /></Protected>} />
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>

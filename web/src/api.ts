@@ -12,6 +12,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
       ...init.headers,
     },
   })
+  if (res.status === 401) { logout(); window.location.href = '/auth'; throw new Error('Unauthorized') }
   if (!res.ok) throw new Error((await res.text()) || res.statusText)
   return res.status === 204 ? (undefined as T) : res.json()
 }

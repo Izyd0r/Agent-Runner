@@ -1,17 +1,24 @@
 using System.Security.Claims;
-using Microsoft.AspNetCore.Identity;
-using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddDbContext<AppDb>(o => o.UseSqlite("Data Source=app.db"));
+// ---------- Services ----------
+builder.Services.AddDbContext<AppDb>(o =>
+    o.UseSqlite(builder.Configuration.GetConnectionString("Default") ?? "Data Source=App_Data/app.db"));
+
 builder.Services.AddAuthorization();
 builder.Services.AddIdentityApiEndpoints<AppUser>()
     .AddEntityFrameworkStores<AppDb>();
+
+// Enums as "Todo" / "InProgress" instead of 0 / 1
+builder.Services.ConfigureHttpJsonOptions(o =>
+    o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+
 builder.Services.AddOpenApi(options =>
 {
     options.AddDocumentTransformer((document, ctx, ct) =>
@@ -43,9 +50,17 @@ builder.Services.AddOpenApi(options =>
 
 var app = builder.Build();
 
-using (var scope = app.Services.CreateScope())
-    scope.ServiceProvider.GetRequiredService<AppDb>().Database.EnsureCreated();
+// ---------- Database ----------
+Directory.CreateDirectory("App_Data");
 
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDb>();
+    db.Database.Migrate();                                  // applies pending EF migrations
+    db.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");  // concurrent reads while agents write logs
+}
+
+// ---------- Pipeline ----------
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
@@ -55,15 +70,15 @@ if (app.Environment.IsDevelopment())
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapGroup("/api/auth").MapIdentityApi<AppUser>();
+// ---------- Endpoints ----------
+app.MapGroup("/api/auth").MapIdentityApi<AppUser>().WithTags("Auth");
 
 app.MapGet("/api/me", (ClaimsPrincipal user) => new
 {
     Id = user.FindFirstValue(ClaimTypes.NameIdentifier),
     Email = user.FindFirstValue(ClaimTypes.Email)
-}).RequireAuthorization();
+}).RequireAuthorization().WithTags("Auth");
+
+app.MapProjectEndpoints(); // also maps tasks + agents under /api/projects/{projectId}
 
 app.Run();
-
-public class AppUser : IdentityUser { public string? DisplayName { get; set; } }
-public class AppDb(DbContextOptions<AppDb> options) : IdentityDbContext<AppUser>(options);

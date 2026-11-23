@@ -1,0 +1,33 @@
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editors / IDEs
+.idea/
+.vs/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+*.swp
+*.swo
+*~
+
+# Secrets / local env (any depth)
+.env
+.env.*
+!.env.example
+*.pfx
+*.pem
+*.key
+
+# Logs
+*.log
+logs/
+
+# Temp / backup files
+*.tmp
+*.bak
+*.backup.*

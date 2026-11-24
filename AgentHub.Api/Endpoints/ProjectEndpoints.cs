@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
+using AgentHub.Api.Services;
 
 public record CreateProject(string Name, string? Description, string? GitHubUrl);
 public record InviteRequest(string Email);
@@ -52,6 +53,26 @@ public static class ProjectEndpoints
             if (!isOwner) return Results.Forbid();
             await db.Projects.Where(p => p.Id == projectId).ExecuteDeleteAsync();
             return Results.NoContent();
+        });
+
+        proj.MapPost("/sync", async (Guid projectId, AppDb db, WorkspaceService ws, ClaimsPrincipal u, CancellationToken ct) =>
+        {
+            var uid = u.UserId();
+            var isOwner = await db.Members.AnyAsync(
+                m => m.ProjectId == projectId && m.UserId == uid && m.Role == ProjectRole.Owner, ct);
+            if (!isOwner) return Results.Forbid();
+
+            var project = await db.Projects.FindAsync([projectId], ct);
+            if (string.IsNullOrWhiteSpace(project?.GitHubUrl))
+                return Results.BadRequest("Project has no GitHub URL.");
+
+            try
+            {
+                var (branch, commit) = await ws.SyncAsync(projectId, project.GitHubUrl, token: null, ct);
+                return Results.Ok(new { defaultBranch = branch, commit });
+            }
+            catch (GitException ex) { return Results.Problem(ex.Message, statusCode: 502); }
+            catch (ArgumentException ex) { return Results.BadRequest(ex.Message); }
         });
 
         proj.MapGet("/members", async (Guid projectId, AppDb db) =>

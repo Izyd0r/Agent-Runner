@@ -14,6 +14,9 @@ builder.Services.AddDbContext<AppDb>(o =>
 builder.Services.AddAuthorization();
 builder.Services.AddIdentityApiEndpoints<AppUser>()
     .AddEntityFrameworkStores<AppDb>();
+builder.Services.Configure<AgentHub.Api.Services.WorkspaceOptions>(
+    builder.Configuration.GetSection("Workspaces"));
+builder.Services.AddSingleton<AgentHub.Api.Services.WorkspaceService>();
 
 // Enums as "Todo" / "InProgress" instead of 0 / 1
 builder.Services.ConfigureHttpJsonOptions(o =>

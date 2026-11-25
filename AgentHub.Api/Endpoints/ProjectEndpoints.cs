@@ -94,5 +94,6 @@ public static class ProjectEndpoints
         // Feature modules plug into the same protected group
         proj.MapTaskEndpoints();
         proj.MapAgentEndpoints();
+        proj.MapRunEndpoints();
     }
 }

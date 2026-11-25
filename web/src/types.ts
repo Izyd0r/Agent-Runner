@@ -8,3 +8,22 @@ export interface Task {
 }
 export interface Agent { id: string; name: string; model: string; systemPrompt: string; temperature: number }
 export interface Member { userId: string; email: string; role: 'Owner' | 'Member' }
+
+export type RunStatus = 'Queued' | 'Running' | 'Succeeded' | 'Failed'
+
+export type Run = {
+  id: string
+  taskId: string
+  agentId: string
+  status: RunStatus
+  startedAt: string
+  finishedAt: string | null
+}
+
+export type RunLog = { id: number; runId: string; at: string; kind: string; message: string }
+
+export const RUN_COLOR: Record<RunStatus, string> = {
+  Queued: 'gray', Running: 'blue', Succeeded: 'green', Failed: 'red',
+}
+
+export const isActive = (r?: Run) => r?.status === 'Queued' || r?.status === 'Running'

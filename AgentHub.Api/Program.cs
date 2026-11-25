@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi;
 using Scalar.AspNetCore;
+using AgentHub.Api.Services;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -17,6 +19,15 @@ builder.Services.AddIdentityApiEndpoints<AppUser>()
 builder.Services.Configure<AgentHub.Api.Services.WorkspaceOptions>(
     builder.Configuration.GetSection("Workspaces"));
 builder.Services.AddSingleton<AgentHub.Api.Services.WorkspaceService>();
+builder.Services.AddSingleton<RunQueue>();
+builder.Services.AddHostedService<AgentRunner>();
+builder.Services.Configure<OllamaOptions>(builder.Configuration.GetSection("Ollama"));
+
+builder.Services.AddHttpClient<OllamaClient>((sp, client) =>
+{
+    client.BaseAddress = new Uri(sp.GetRequiredService<IOptions<OllamaOptions>>().Value.BaseUrl);
+    client.Timeout = TimeSpan.FromMinutes(10);   // local inference can be slow
+});
 
 // Enums as "Todo" / "InProgress" instead of 0 / 1
 builder.Services.ConfigureHttpJsonOptions(o =>
@@ -83,5 +94,4 @@ app.MapGet("/api/me", (ClaimsPrincipal user) => new
 }).RequireAuthorization().WithTags("Auth");
 
 app.MapProjectEndpoints(); // also maps tasks + agents under /api/projects/{projectId}
-
 app.Run();

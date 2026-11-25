@@ -12,7 +12,7 @@ export default function AgentsTab({ projectId }: { projectId: string }) {
   const { data: agents = [] } = useQuery({ queryKey: key, queryFn: () => api<Agent[]>(base) })
 
   const form = useForm({
-    initialValues: { name: '', model: 'llama3.1', systemPrompt: 'You are a careful software engineer.', temperature: 0.2 },
+    initialValues: { name: '', model: 'gpt-oss:20b', systemPrompt: 'You are a careful software engineer.', temperature: 0.2 },
     validate: { name: v => (v.trim() ? null : 'Required') },
   })
 
@@ -47,7 +47,7 @@ export default function AgentsTab({ projectId }: { projectId: string }) {
           <Stack>
             <Text fw={600}>New agent</Text>
             <TextInput label="Name" {...form.getInputProps('name')} />
-            <TextInput label="Ollama model" description="Must be pulled locally, e.g. qwen2.5-coder" {...form.getInputProps('model')} />
+            <TextInput label="Ollama model" description="Must be pulled locally, e.g. gpt-oss:20b" {...form.getInputProps('model')} />
             <Textarea label="System prompt" autosize minRows={4} {...form.getInputProps('systemPrompt')} />
             <NumberInput label="Temperature" min={0} max={2} step={0.1} decimalScale={1} {...form.getInputProps('temperature')} />
             <Button type="submit" loading={create.isPending}>Create agent</Button>

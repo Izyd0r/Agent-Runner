@@ -26,6 +26,7 @@ public sealed partial class WorkspaceService(IOptions<WorkspaceOptions> opts)
     private static partial Regex GitHubUrl();
 
     public static bool IsValidUrl(string url) => GitHubUrl().IsMatch(url);
+    public bool IsCloned(Guid projectId) => Directory.Exists(BareDir(projectId));
 
     /// Makes the local mirror identical to the remote and discards all local work
     /// (run worktrees + agent/* branches). Clones on first call.
@@ -77,7 +78,7 @@ public sealed partial class WorkspaceService(IOptions<WorkspaceOptions> opts)
     }
 
     // WorkspaceService: fetch only, no wiping
-    public async Task<string> FetchAsync(Guid projectId, string url, string? token, CancellationToken ct = default) 
+    public async Task<string> FetchAsync(Guid projectId, string url, string? token, CancellationToken ct = default)
     {
         var sem = LockFor(projectId);
         await sem.WaitAsync(ct);

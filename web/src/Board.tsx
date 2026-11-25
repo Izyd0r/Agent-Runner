@@ -1,23 +1,47 @@
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { DndContext, PointerSensor, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
-import { ActionIcon, Badge, Button, Group, Modal, Paper, Select, SimpleGrid, Stack, Text, TextInput, Textarea, Title } from '@mantine/core'
-import { useDisclosure } from '@mantine/hooks'
+import { ActionIcon, Badge, Button, Group, Loader, Modal, Paper, Select, SimpleGrid, Stack, Text, TextInput, Textarea, Title } from '@mantine/core'
+import { useDisclosure, usePrevious } from '@mantine/hooks'
 import { useForm } from '@mantine/form'
 import { notifications } from '@mantine/notifications'
 import { api } from './api'
-import { STATUSES, type Agent, type Member, type Status, type Task } from './types'
+import RunLogModal from './RunLogModal'
+import { RUN_COLOR, STATUSES, isActive, type Agent, type Member, type Run, type Status, type Task } from './types'
 
 export default function Board({ projectId }: { projectId: string }) {
   const qc = useQueryClient()
   const base = `/projects/${projectId}`
   const [opened, { open, close }] = useDisclosure(false)
+  const [logRunId, setLogRunId] = useState<string | null>(null)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
-  const { data: tasks = [] } = useQuery({ queryKey: ['tasks', projectId], queryFn: () => api<Task[]>(`${base}/tasks`) })
+  const key = ['tasks', projectId]
+  const runsKey = ['runs', projectId]
+
+  // Runs: poll every 2s while anything is queued/running
+  const { data: runs = [] } = useQuery({
+    queryKey: runsKey,
+    queryFn: () => api<Run[]>(`${base}/runs`),
+    refetchInterval: q => (q.state.data?.some(isActive) ? 2000 : false),
+  })
+  const anyActive = runs.some(isActive)
+
+  // Tasks: also poll while a run is active (the server moves the task to Review when it finishes)
+  const { data: tasks = [] } = useQuery({
+    queryKey: key,
+    queryFn: () => api<Task[]>(`${base}/tasks`),
+    refetchInterval: anyActive ? 2000 : false,
+  })
   const { data: agents = [] } = useQuery({ queryKey: ['agents', projectId], queryFn: () => api<Agent[]>(`${base}/agents`) })
   const { data: members = [] } = useQuery({ queryKey: ['members', projectId], queryFn: () => api<Member[]>(`${base}/members`) })
 
-  const key = ['tasks', projectId]
+  // When the last active run finishes, refresh tasks once more
+  const wasActive = usePrevious(anyActive)
+  useEffect(() => {
+    if (wasActive && !anyActive) qc.invalidateQueries({ queryKey: key })
+  }, [wasActive, anyActive]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const onError = (e: unknown) => notifications.show({ color: 'red', message: (e as Error).message })
 
   const form = useForm({
@@ -59,6 +83,16 @@ export default function Board({ projectId }: { projectId: string }) {
     onError,
   })
 
+  const startRun = useMutation({
+    mutationFn: (taskId: string) => api<Run>(`${base}/tasks/${taskId}/run`, { method: 'POST' }),
+    onSuccess: r => {
+      qc.invalidateQueries({ queryKey: runsKey })
+      qc.invalidateQueries({ queryKey: key })
+      setLogRunId(r.id) // open the live log right away
+    },
+    onError,
+  })
+
   function onDragEnd(e: DragEndEvent) {
     if (!e.over) return
     const status = e.over.id as Status
@@ -78,6 +112,9 @@ export default function Board({ projectId }: { projectId: string }) {
     { group: 'Agents', items: agents.map(a => ({ value: `a:${a.id}`, label: `${a.name}` })) },
   ]
 
+  // Runs come newest-first from the server, so find() returns each task's latest run
+  const latestRun = (taskId: string) => runs.find(r => r.taskId === taskId)
+
   return (
     <>
       <Group justify="flex-end" mb="md"><Button onClick={open}>New task</Button></Group>
@@ -87,7 +124,16 @@ export default function Board({ projectId }: { projectId: string }) {
           {STATUSES.map(s => (
             <Column key={s} status={s}>
               {tasks.filter(t => t.status === s).sort((a, b) => a.position - b.position).map(t => (
-                <Card key={t.id} task={t} assignee={assigneeLabel(t)} onDelete={() => remove.mutate(t.id)} />
+                <Card
+                  key={t.id}
+                  task={t}
+                  assignee={assigneeLabel(t)}
+                  run={latestRun(t.id)}
+                  starting={startRun.isPending && startRun.variables === t.id}
+                  onDelete={() => remove.mutate(t.id)}
+                  onRun={() => startRun.mutate(t.id)}
+                  onLogs={() => setLogRunId(latestRun(t.id)?.id ?? null)}
+                />
               ))}
             </Column>
           ))}
@@ -105,6 +151,8 @@ export default function Board({ projectId }: { projectId: string }) {
           </Stack>
         </form>
       </Modal>
+
+      <RunLogModal projectId={projectId} runId={logRunId} onClose={() => setLogRunId(null)} />
     </>
   )
 }
@@ -120,7 +168,15 @@ function Column({ status, children }: { status: Status; children: React.ReactNod
   )
 }
 
-function Card({ task, assignee, onDelete }: { task: Task; assignee: string | null; onDelete: () => void }) {
+function Card({ task, assignee, run, starting, onDelete, onRun, onLogs }: {
+  task: Task
+  assignee: string | null
+  run?: Run
+  starting: boolean
+  onDelete: () => void
+  onRun: () => void
+  onLogs: () => void
+}) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: task.id })
   return (
     <Paper ref={setNodeRef} withBorder p="xs" {...listeners} {...attributes}
@@ -135,6 +191,27 @@ function Card({ task, assignee, onDelete }: { task: Task; assignee: string | nul
       </Group>
       {task.description && <Text size="xs" c="dimmed" lineClamp={2}>{task.description}</Text>}
       {assignee && <Badge mt="xs" size="xs" variant="light">{assignee}</Badge>}
+
+      {/* Run controls: only for agent-assigned tasks. Stop pointerdown so clicks don't start a drag. */}
+      {task.assigneeAgentId && (
+        <Group mt="xs" gap="xs" onPointerDown={e => e.stopPropagation()}>
+          {run && (
+            <Badge
+              size="xs"
+              variant="light"
+              color={RUN_COLOR[run.status]}
+              style={{ cursor: 'pointer' }}
+              onClick={onLogs}
+              leftSection={isActive(run) ? <Loader size={8} /> : undefined}
+            >
+              {run.status}
+            </Badge>
+          )}
+          <Button size="compact-xs" variant="light" disabled={isActive(run)} loading={starting} onClick={onRun}>
+            {run ? 'Re-run' : 'Run'}
+          </Button>
+        </Group>
+      )}
     </Paper>
   )
 }

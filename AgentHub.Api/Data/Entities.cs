@@ -1,6 +1,11 @@
 using Microsoft.AspNetCore.Identity;
 
-public class AppUser : IdentityUser { public string? DisplayName { get; set; } }
+public class AppUser : IdentityUser
+{
+    public string? DisplayName { get; set; }
+    public string? GitHubUsername { get; set; }
+    public string? RoleTitle { get; set; }
+}
 
 public enum ProjectRole { Owner, Member }
 public enum TaskItemStatus { Todo, InProgress, Review, Done }

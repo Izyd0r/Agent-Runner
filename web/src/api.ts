@@ -8,7 +8,16 @@ interface AuthResponse {
   expiresIn: number
 }
 
+export interface RegisterInput {
+  email: string
+  password: string
+  displayName: string
+  gitHubUsername?: string
+  roleTitle?: string
+}
+
 export const getToken = () => localStorage.getItem(TOKEN_KEY)
+
 export const getExpiresAt = () => {
   const raw = localStorage.getItem(EXPIRES_KEY)
   return raw ? Number(raw) : null
@@ -64,7 +73,7 @@ export async function refreshSession(minIntervalMs = 0): Promise<boolean> {
   return inFlightRefresh
 }
 
-export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function api<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
   const makeRequest = (token: string | null) =>
     fetch(`/api${path}`, {
       ...init,
@@ -87,7 +96,9 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new Error('Unauthorized')
   }
   if (!res.ok) throw new Error((await res.text()) || res.statusText)
-  return res.status === 204 ? (undefined as T) : res.json()
+
+  const text = await res.text()
+  return text ? (JSON.parse(text) as T) : (undefined as T)
 }
 
 export async function login(email: string, password: string) {
@@ -98,5 +109,18 @@ export async function login(email: string, password: string) {
   saveSession(r)
 }
 
-export const register = (email: string, password: string) =>
-  api('/auth/register', { method: 'POST', body: JSON.stringify({ email, password }) })
+export const register = (data: RegisterInput) =>
+  api('/auth/signup', { method: 'POST', body: JSON.stringify(data) })
+
+export const forgotPassword = (email: string) =>
+  api('/auth/forgot-password', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  })
+
+export const resetPassword = (email: string, resetCode: string, newPassword: string) =>
+  api('/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ email, resetCode, newPassword }),
+  })
+  

@@ -6,6 +6,8 @@ using Microsoft.OpenApi;
 using Scalar.AspNetCore;
 using AgentHub.Api.Services;
 using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.DataProtection;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -16,6 +18,7 @@ builder.Services.AddDbContext<AppDb>(o =>
 builder.Services.AddAuthorization();
 builder.Services.AddIdentityApiEndpoints<AppUser>()
     .AddEntityFrameworkStores<AppDb>();
+builder.Services.AddTransient<IEmailSender<AppUser>, SmtpEmailSender>();
 builder.Services.Configure<AgentHub.Api.Services.WorkspaceOptions>(
     builder.Configuration.GetSection("Workspaces"));
 builder.Services.AddSingleton<AgentHub.Api.Services.WorkspaceService>();
@@ -28,8 +31,8 @@ builder.Services.AddHttpClient<OllamaClient>((sp, client) =>
     client.BaseAddress = new Uri(sp.GetRequiredService<IOptions<OllamaOptions>>().Value.BaseUrl);
     client.Timeout = TimeSpan.FromMinutes(10);   // local inference can be slow
 });
-builder.Services.AddDataProtection();
-
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo("App_Data/keys"));
 // Enums as "Todo" / "InProgress" instead of 0 / 1
 builder.Services.ConfigureHttpJsonOptions(o =>
     o.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
@@ -86,13 +89,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 // ---------- Endpoints ----------
-app.MapGroup("/api/auth").MapIdentityApi<AppUser>().WithTags("Auth");
-
-app.MapGet("/api/me", (ClaimsPrincipal user) => new
-{
-    Id = user.FindFirstValue(ClaimTypes.NameIdentifier),
-    Email = user.FindFirstValue(ClaimTypes.Email)
-}).RequireAuthorization().WithTags("Auth");
-
+app.MapCustomAuthEndpoints();
 app.MapProjectEndpoints(); // also maps tasks + agents under /api/projects/{projectId}
+
 app.Run();

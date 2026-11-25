@@ -13,6 +13,8 @@ public static class AgentEndpoints
 
         g.MapPost("/", async (Guid projectId, AgentInput req, AppDb db) =>
         {
+            if (string.IsNullOrWhiteSpace(req.Name) || string.IsNullOrWhiteSpace(req.Model))
+                return Results.BadRequest("Name and Model are required.");
             var a = new Agent
             {
                 ProjectId = projectId,
@@ -28,6 +30,8 @@ public static class AgentEndpoints
 
         g.MapPut("/{id:guid}", async (Guid projectId, Guid id, AgentInput req, AppDb db) =>
         {
+            if (string.IsNullOrWhiteSpace(req.Name) || string.IsNullOrWhiteSpace(req.Model))
+                return Results.BadRequest("Name and Model are required.");
             var a = await db.Agents.FirstOrDefaultAsync(x => x.Id == id && x.ProjectId == projectId);
             if (a is null) return Results.NotFound();
             a.Name = req.Name; a.Model = req.Model; a.SystemPrompt = req.SystemPrompt; a.Temperature = req.Temperature;
@@ -39,6 +43,35 @@ public static class AgentEndpoints
         {
             var n = await db.Agents.Where(x => x.Id == id && x.ProjectId == projectId).ExecuteDeleteAsync();
             return n == 0 ? Results.NotFound() : Results.NoContent();
+        });
+
+        // All runs for a specific agent across the project, newest first
+        g.MapGet("/{id:guid}/runs", async (Guid projectId, Guid id, AppDb db) =>
+        {
+            var exists = await db.Agents.AnyAsync(a => a.Id == id && a.ProjectId == projectId);
+            if (!exists) return Results.NotFound();
+
+            var runs = await (
+                from r in db.Runs
+                join t in db.Tasks on r.TaskId equals t.Id
+                where r.AgentId == id && t.ProjectId == projectId
+                orderby r.StartedAt descending
+                select new
+                {
+                    r.Id,
+                    r.TaskId,
+                    TaskTitle = t.Title,
+                    r.AgentId,
+                    r.Status,
+                    r.StartedAt,
+                    r.FinishedAt,
+                    r.Branch,
+                    r.PullRequestUrl,
+                    LogCount = db.RunLogs.Count(l => l.RunId == r.Id)
+                }
+            ).ToListAsync();
+
+            return Results.Ok(runs);
         });
     }
 }

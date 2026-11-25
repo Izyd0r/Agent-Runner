@@ -3,7 +3,8 @@ using Microsoft.EntityFrameworkCore;
 namespace AgentHub.Api.Services;
 
 public sealed class AgentRunner(
-    RunQueue queue, IServiceScopeFactory scopes, IConfiguration config, ILogger<AgentRunner> log)
+    RunQueue queue, IServiceScopeFactory scopes, IConfiguration config,
+    GitHubService github, ILogger<AgentRunner> log)
     : BackgroundService
 {
     private const int MaxSteps = 25;
@@ -85,6 +86,8 @@ public sealed class AgentRunner(
 
             w = await ws.CreateRunWorkspaceAsync(
                 project.Id, runId, task.Id, task.Title, agent.Name, attempt, defaultBranch, ct);
+            run.Branch = w.Branch;
+            await db.SaveChangesAsync(ct);
             await Log("info", $"Attempt #{attempt} by {agent.Name} on branch {w.Branch} (from {defaultBranch})");
 
             var tools = new AgentTools(w.Path);
@@ -100,6 +103,7 @@ public sealed class AgentRunner(
             };
 
             var finished = false;
+            string? summary = null;
             for (var step = 1; step <= MaxSteps; step++)
             {
                 var result = await ollama.ChatAsync(agent.Model, agent.Temperature, messages, AgentTools.Definitions, ct);
@@ -109,7 +113,8 @@ public sealed class AgentRunner(
 
                 if (reply.ToolCalls is not { Count: > 0 })
                 {
-                    await Log("message", string.IsNullOrWhiteSpace(reply.Content) ? "(empty reply)" : reply.Content);
+                    summary = string.IsNullOrWhiteSpace(reply.Content) ? null : reply.Content.Trim();
+                    await Log("message", summary ?? "(empty reply)");
                     finished = true;
                     break;
                 }
@@ -134,9 +139,11 @@ public sealed class AgentRunner(
             }
             else
             {
+                var agentSlug = WorkspaceService.Slugify(agent.Name, 24);
                 await Git.RunAsync(w.Path,
-                    ["-c", "user.name=AgentHub", "-c", "user.email=agent@agenthub.local",
-                     "commit", "-m", $"agent: {task.Title}"], ct: ct);
+                    ["-c", $"user.name={agent.Name} (AgentHub)",
+                     "-c", $"user.email={agentSlug}@agenthub.local",
+                     "commit", "-m", $"agent({agent.Name}): {task.Title} (try #{attempt})"], ct: ct);
 
                 if (string.IsNullOrEmpty(token))
                 {
@@ -147,6 +154,21 @@ public sealed class AgentRunner(
                 {
                     await Git.RunAsync(w.Path, ["push", "origin", w.Branch], token, ct: ct);
                     await Log("info", $"Pushed branch {w.Branch}");
+
+                    if (finished)
+                    {
+                        var prBody = $"Automated pull request created by **{agent.Name}** (Attempt #{attempt}).\n\n" +
+                                     (summary is not null ? $"### Summary\n{summary}" : task.Description ?? "");
+                        var prUrl = await github.CreatePullRequestAsync(
+                            project.GitHubUrl, token, w.Branch, defaultBranch,
+                            $"[AgentHub] {task.Title} (try #{attempt})", prBody, ct);
+
+                        if (prUrl is not null)
+                        {
+                            run.PullRequestUrl = prUrl;
+                            await Log("info", $"Pull request created: {prUrl}");
+                        }
+                    }
                 }
             }
 

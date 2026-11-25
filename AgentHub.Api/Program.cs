@@ -22,7 +22,7 @@ builder.Services.AddSingleton<AgentHub.Api.Services.WorkspaceService>();
 builder.Services.AddSingleton<RunQueue>();
 builder.Services.AddHostedService<AgentRunner>();
 builder.Services.Configure<OllamaOptions>(builder.Configuration.GetSection("Ollama"));
-
+builder.Services.AddHttpClient<GitHubService>();
 builder.Services.AddHttpClient<OllamaClient>((sp, client) =>
 {
     client.BaseAddress = new Uri(sp.GetRequiredService<IOptions<OllamaOptions>>().Value.BaseUrl);

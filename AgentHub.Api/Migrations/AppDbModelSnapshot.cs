@@ -56,7 +56,13 @@ namespace AgentHub.Api.Migrations
                     b.Property<Guid>("AgentId")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Branch")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime?>("FinishedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PullRequestUrl")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("StartedAt")

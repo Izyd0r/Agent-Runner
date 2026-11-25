@@ -11,13 +11,15 @@ export interface Member { userId: string; email: string; role: 'Owner' | 'Member
 
 export type RunStatus = 'Queued' | 'Running' | 'Succeeded' | 'Failed'
 
-export type Run = {
+export interface Run {
   id: string
   taskId: string
   agentId: string
   status: RunStatus
   startedAt: string
-  finishedAt: string | null
+  finishedAt?: string | null
+  branch?: string | null
+  pullRequestUrl?: string | null
 }
 
 export type RunLog = { id: number; runId: string; at: string; kind: string; message: string }

@@ -55,6 +55,8 @@ public class AgentRun
     public RunStatus Status { get; set; } = RunStatus.Queued;
     public DateTime StartedAt { get; set; } = DateTime.UtcNow;
     public DateTime? FinishedAt { get; set; }
+    public string? Branch { get; set; }
+    public string? PullRequestUrl { get; set; }
 }
 
 public class AgentRunLog

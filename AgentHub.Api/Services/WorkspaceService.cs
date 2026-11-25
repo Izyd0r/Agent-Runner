@@ -139,7 +139,7 @@ public sealed partial class WorkspaceService(IOptions<WorkspaceOptions> opts)
         return new RunWorkspace(path, branch, defaultBranch);
     }
 
-    private static string Slugify(string s, int maxLen = 30)
+    public static string Slugify(string s, int maxLen = 30)
     {
         var slug = Regex.Replace(s.ToLowerInvariant(), "[^a-z0-9]+", "-").Trim('-');
         return slug.Length == 0 ? "item" : slug[..Math.Min(slug.Length, maxLen)];

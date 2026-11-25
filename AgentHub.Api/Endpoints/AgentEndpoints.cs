@@ -1,3 +1,4 @@
+using AgentHub.Api.Services;
 using Microsoft.EntityFrameworkCore;
 
 public record AgentInput(string Name, string Model, string SystemPrompt, double Temperature);
@@ -72,6 +73,19 @@ public static class AgentEndpoints
             ).ToListAsync();
 
             return Results.Ok(runs);
+        });
+
+        g.MapGet("/models", async (OllamaClient ollama, CancellationToken ct) =>
+        {
+            try
+            {
+                var models = await ollama.ListModelsAsync(ct);
+                return Results.Ok(new { available = true, models });
+            }
+            catch (Exception ex)
+            {
+                return Results.Ok(new { available = false, error = ex.Message, models = Array.Empty<OllamaModelDto>() });
+            }
         });
     }
 }

@@ -28,6 +28,7 @@ builder.Services.AddHttpClient<OllamaClient>((sp, client) =>
     client.BaseAddress = new Uri(sp.GetRequiredService<IOptions<OllamaOptions>>().Value.BaseUrl);
     client.Timeout = TimeSpan.FromMinutes(10);   // local inference can be slow
 });
+builder.Services.AddDataProtection();
 
 // Enums as "Todo" / "InProgress" instead of 0 / 1
 builder.Services.ConfigureHttpJsonOptions(o =>

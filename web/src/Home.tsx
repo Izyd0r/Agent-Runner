@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Card, Group, Menu, Modal, SimpleGrid, Stack, Text, TextInput, Textarea, Title } from '@mantine/core'
+import { Badge, Button, Card, Checkbox, Group, Menu, Modal, PasswordInput, SimpleGrid, Stack, Text, TextInput, Textarea, Title } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { useForm } from '@mantine/form'
 import { notifications } from '@mantine/notifications'
@@ -17,7 +17,7 @@ export default function Home() {
   const { data: projects = [] } = useQuery({ queryKey: ['projects'], queryFn: () => api<Project[]>('/projects') })
 
   const form = useForm({
-    initialValues: { name: '', description: '', gitHubUrl: '' },
+    initialValues: { name: '', description: '', gitHubUrl: '', gitHubToken: '', clearGitHubToken: false },
     validate: { name: v => (v.trim() ? null : 'Required') },
   })
 
@@ -29,7 +29,13 @@ export default function Home() {
 
   const openEdit = (p: Project) => {
     setEditing(p)
-    form.setValues({ name: p.name, description: p.description ?? '', gitHubUrl: p.gitHubUrl ?? '' })
+    form.setValues({
+      name: p.name,
+      description: p.description ?? '',
+      gitHubUrl: p.gitHubUrl ?? '',
+      gitHubToken: '',
+      clearGitHubToken: false,
+    })
     form.resetDirty()
     open()
   }
@@ -46,6 +52,8 @@ export default function Home() {
         name: v.name.trim(),
         description: v.description.trim() || null,
         gitHubUrl: v.gitHubUrl.trim() || null,
+        gitHubToken: v.gitHubToken.trim() || null,
+        clearGitHubToken: v.clearGitHubToken,
       })
       return editing
         ? api(`/projects/${editing.id}`, { method: 'PUT', body })
@@ -84,6 +92,11 @@ export default function Home() {
                 <Text fw={600}>{p.name}</Text>
                 <Text size="sm" c="dimmed" lineClamp={2}>{p.description || 'No description'}</Text>
                 {p.gitHubUrl && <Text size="xs" mt="xs" c="teal">{p.gitHubUrl}</Text>}
+                {p.gitHubUrl && (
+                  <Badge mt={6} size="xs" variant="light" color={p.hasGitHubToken ? 'teal' : 'yellow'}>
+                    {p.hasGitHubToken ? 'Token configured' : 'No token'}
+                  </Badge>
+                )}
               </Link>
               <Menu position="bottom-end" withinPortal>
                 <Menu.Target>
@@ -106,6 +119,19 @@ export default function Home() {
             <TextInput label="Name" data-autofocus {...form.getInputProps('name')} />
             <Textarea label="Description" autosize minRows={2} {...form.getInputProps('description')} />
             <TextInput label="GitHub URL" placeholder="https://github.com/user/repo" {...form.getInputProps('gitHubUrl')} />
+            <PasswordInput
+              label="Fine-Grained GitHub PAT"
+              description="Scope to this single repository with Contents (Read/Write) and Pull Requests (Read/Write)."
+              placeholder={editing?.hasGitHubToken ? '•••••••• (saved — leave blank to keep)' : 'github_pat_...'}
+              disabled={form.values.clearGitHubToken}
+              {...form.getInputProps('gitHubToken')}
+            />
+            {editing?.hasGitHubToken && (
+              <Checkbox
+                label="Remove saved GitHub token"
+                {...form.getInputProps('clearGitHubToken', { type: 'checkbox' })}
+              />
+            )}
             <Button type="submit" loading={save.isPending}>{editing ? 'Save changes' : 'Create'}</Button>
           </Stack>
         </form>

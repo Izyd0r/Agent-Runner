@@ -12,6 +12,7 @@ public class Project
     public string Name { get; set; } = "";
     public string? Description { get; set; }
     public string? GitHubUrl { get; set; }
+    public string? EncryptedGitHubToken { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public List<ProjectMember> Members { get; set; } = [];
 }

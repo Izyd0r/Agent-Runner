@@ -1,14 +1,16 @@
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 
 namespace AgentHub.Api.Services;
 
 public sealed class AgentRunner(
-    RunQueue queue, IServiceScopeFactory scopes, IConfiguration config,
+    RunQueue queue, IServiceScopeFactory scopes, IDataProtectionProvider dp,
     GitHubService github, ILogger<AgentRunner> log)
     : BackgroundService
 {
     private const int MaxSteps = 25;
     private const int NumCtx = 16384;
+    private const string ProtectorPurpose = "AgentHub.Project.GitHubToken";
 
     protected override async Task ExecuteAsync(CancellationToken stop)
     {
@@ -21,7 +23,6 @@ public sealed class AgentRunner(
         }
     }
 
-    /// The queue lives in memory, so after a restart nothing is actually running.
     private async Task RecoverAsync(CancellationToken ct)
     {
         using var scope = scopes.CreateScope();
@@ -46,7 +47,6 @@ public sealed class AgentRunner(
         var agent = await db.Agents.FindAsync([run.AgentId], ct);
         var project = task is null ? null : await db.Projects.FindAsync([task.ProjectId], ct);
 
-        // Logs use CancellationToken.None so they are still written during shutdown/cancel.
         async Task Log(string kind, string message)
         {
             db.RunLogs.Add(new AgentRunLog { RunId = runId, Kind = kind, Message = message });
@@ -66,9 +66,13 @@ public sealed class AgentRunner(
             run.Status = RunStatus.Running;
             await db.SaveChangesAsync(ct);
 
-            var token = config["GitHub:Token"];
+            string? token = null;
+            if (!string.IsNullOrEmpty(project.EncryptedGitHubToken))
+            {
+                var protector = dp.CreateProtector(ProtectorPurpose);
+                token = protector.Unprotect(project.EncryptedGitHubToken);
+            }
 
-            // Clone on first use, otherwise just fetch (Sync would wipe other runs' worktrees).
             string defaultBranch;
             if (!ws.IsCloned(project.Id))
             {
@@ -130,7 +134,6 @@ public sealed class AgentRunner(
 
             if (!finished) await Log("error", $"Stopped: step limit ({MaxSteps}) reached.");
 
-            // Commit and push whatever the agent produced (even partial work, for inspection).
             await Git.RunAsync(w.Path, ["add", "-A"], ct: ct);
             var status = await Git.RunAsync(w.Path, ["status", "--porcelain"], ct: ct);
             if (status.Length == 0)
@@ -148,7 +151,7 @@ public sealed class AgentRunner(
                 if (string.IsNullOrEmpty(token))
                 {
                     keepWorkspace = true;
-                    await Log("info", $"Committed locally, but no GitHub token is configured, so nothing was pushed. Worktree kept at {w.Path}");
+                    await Log("info", $"Committed locally, but no GitHub token is configured on this project, so nothing was pushed. Worktree kept at {w.Path}");
                 }
                 else
                 {

@@ -1,12 +1,15 @@
 using System.Security.Claims;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using AgentHub.Api.Services;
 
-public record CreateProject(string Name, string? Description, string? GitHubUrl);
+public record CreateProject(string Name, string? Description, string? GitHubUrl, string? GitHubToken, bool ClearGitHubToken = false);
 public record InviteRequest(string Email);
 
 public static class ProjectEndpoints
 {
+    private const string ProtectorPurpose = "AgentHub.Project.GitHubToken";
+
     public static void MapProjectEndpoints(this IEndpointRouteBuilder app)
     {
         var root = app.MapGroup("/api/projects").RequireAuthorization().WithTags("Projects");
@@ -17,14 +20,31 @@ public static class ProjectEndpoints
             return await db.Projects
                 .Where(p => p.Members.Any(m => m.UserId == uid))
                 .OrderByDescending(p => p.CreatedAt)
-                .Select(p => new { p.Id, p.Name, p.Description, p.GitHubUrl })
+                .Select(p => new
+                {
+                    p.Id,
+                    p.Name,
+                    p.Description,
+                    p.GitHubUrl,
+                    HasGitHubToken = p.EncryptedGitHubToken != null
+                })
                 .ToListAsync();
         });
 
-        root.MapPost("/", async (CreateProject req, AppDb db, ClaimsPrincipal u) =>
+        root.MapPost("/", async (CreateProject req, AppDb db, IDataProtectionProvider dp, ClaimsPrincipal u) =>
         {
             if (string.IsNullOrWhiteSpace(req.Name)) return Results.BadRequest("Name is required");
-            var p = new Project { Name = req.Name, Description = req.Description, GitHubUrl = req.GitHubUrl };
+            var protector = dp.CreateProtector(ProtectorPurpose);
+
+            var p = new Project
+            {
+                Name = req.Name.Trim(),
+                Description = req.Description,
+                GitHubUrl = req.GitHubUrl,
+                EncryptedGitHubToken = string.IsNullOrWhiteSpace(req.GitHubToken)
+                    ? null
+                    : protector.Protect(req.GitHubToken.Trim())
+            };
             p.Members.Add(new ProjectMember { UserId = u.UserId(), Role = ProjectRole.Owner });
             db.Projects.Add(p);
             await db.SaveChangesAsync();
@@ -36,12 +56,33 @@ public static class ProjectEndpoints
 
         proj.MapGet("/", async (Guid projectId, AppDb db) =>
             await db.Projects.Where(p => p.Id == projectId)
-                .Select(p => new { p.Id, p.Name, p.Description, p.GitHubUrl }).FirstAsync());
+                .Select(p => new
+                {
+                    p.Id,
+                    p.Name,
+                    p.Description,
+                    p.GitHubUrl,
+                    HasGitHubToken = p.EncryptedGitHubToken != null
+                }).FirstAsync());
 
-        proj.MapPut("/", async (Guid projectId, CreateProject req, AppDb db) =>
+        proj.MapPut("/", async (Guid projectId, CreateProject req, AppDb db, IDataProtectionProvider dp) =>
         {
+            if (string.IsNullOrWhiteSpace(req.Name)) return Results.BadRequest("Name is required");
             var p = await db.Projects.FindAsync(projectId);
-            p!.Name = req.Name; p.Description = req.Description; p.GitHubUrl = req.GitHubUrl;
+            p!.Name = req.Name.Trim();
+            p.Description = req.Description;
+            p.GitHubUrl = req.GitHubUrl;
+
+            if (req.ClearGitHubToken)
+            {
+                p.EncryptedGitHubToken = null;
+            }
+            else if (!string.IsNullOrWhiteSpace(req.GitHubToken))
+            {
+                var protector = dp.CreateProtector(ProtectorPurpose);
+                p.EncryptedGitHubToken = protector.Protect(req.GitHubToken.Trim());
+            }
+
             await db.SaveChangesAsync();
             return Results.NoContent();
         });
@@ -55,7 +96,7 @@ public static class ProjectEndpoints
             return Results.NoContent();
         });
 
-        proj.MapPost("/sync", async (Guid projectId, AppDb db, WorkspaceService ws, ClaimsPrincipal u, CancellationToken ct) =>
+        proj.MapPost("/sync", async (Guid projectId, AppDb db, WorkspaceService ws, IDataProtectionProvider dp, ClaimsPrincipal u, CancellationToken ct) =>
         {
             var uid = u.UserId();
             var isOwner = await db.Members.AnyAsync(
@@ -66,9 +107,16 @@ public static class ProjectEndpoints
             if (string.IsNullOrWhiteSpace(project?.GitHubUrl))
                 return Results.BadRequest("Project has no GitHub URL.");
 
+            string? token = null;
+            if (!string.IsNullOrEmpty(project.EncryptedGitHubToken))
+            {
+                var protector = dp.CreateProtector(ProtectorPurpose);
+                token = protector.Unprotect(project.EncryptedGitHubToken);
+            }
+
             try
             {
-                var (branch, commit) = await ws.SyncAsync(projectId, project.GitHubUrl, token: null, ct);
+                var (branch, commit) = await ws.SyncAsync(projectId, project.GitHubUrl, token, ct);
                 return Results.Ok(new { defaultBranch = branch, commit });
             }
             catch (GitException ex) { return Results.Problem(ex.Message, statusCode: 502); }

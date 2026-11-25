@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Group, Modal, Stack, Tabs, Text, Textarea, TextInput, Title } from '@mantine/core'
+import { Badge, Button, Checkbox, Group, Modal, PasswordInput, Stack, Tabs, Text, Textarea, TextInput, Title } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { api } from './api'
 import Layout from './Layout'
@@ -21,11 +21,15 @@ export default function ProjectPage() {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [gitHubUrl, setGitHubUrl] = useState('')
+  const [gitHubToken, setGitHubToken] = useState('')
+  const [clearGitHubToken, setClearGitHubToken] = useState(false)
 
   const openEdit = () => {
     setName(project?.name ?? '')
     setDescription(project?.description ?? '')
     setGitHubUrl(project?.gitHubUrl ?? '')
+    setGitHubToken('')
+    setClearGitHubToken(false)
     save.reset()
     editModal.open()
   }
@@ -38,6 +42,8 @@ export default function ProjectPage() {
           name: name.trim(),
           description: description.trim() || null,
           gitHubUrl: gitHubUrl.trim() || null,
+          gitHubToken: gitHubToken.trim() || null,
+          clearGitHubToken,
         }),
       }),
     onSuccess: () => {
@@ -62,7 +68,14 @@ export default function ProjectPage() {
         <div>
           <Title order={2}>{project?.name}</Title>
           {project?.description && <Text size="sm" mt={4}>{project.description}</Text>}
-          <Text size="sm" c="dimmed" mb="md">{project?.gitHubUrl}</Text>
+          <Group gap="xs" mt={4} mb="md">
+            <Text size="sm" c="dimmed">{project?.gitHubUrl}</Text>
+            {project?.gitHubUrl && (
+              <Badge size="xs" variant="light" color={project.hasGitHubToken ? 'teal' : 'yellow'}>
+                {project.hasGitHubToken ? 'Token configured' : 'No token'}
+              </Badge>
+            )}
+          </Group>
         </div>
         <Group gap="xs">
           <Button variant="default" onClick={openEdit} disabled={!project}>Edit project</Button>
@@ -110,6 +123,21 @@ export default function ProjectPage() {
             value={gitHubUrl}
             onChange={(e) => setGitHubUrl(e.currentTarget.value)}
           />
+          <PasswordInput
+            label="Fine-Grained GitHub PAT"
+            description="Scope to this single repository with Contents (Read/Write) and Pull Requests (Read/Write)."
+            placeholder={project?.hasGitHubToken ? '•••••••• (saved — leave blank to keep)' : 'github_pat_...'}
+            value={gitHubToken}
+            disabled={clearGitHubToken}
+            onChange={(e) => setGitHubToken(e.currentTarget.value)}
+          />
+          {project?.hasGitHubToken && (
+            <Checkbox
+              label="Remove saved GitHub token"
+              checked={clearGitHubToken}
+              onChange={(e) => setClearGitHubToken(e.currentTarget.checked)}
+            />
+          )}
           {save.isError && <Text c="red" size="sm">Couldn’t save changes. Try again.</Text>}
           <Group justify="flex-end">
             <Button variant="default" onClick={editModal.close}>Cancel</Button>

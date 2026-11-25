@@ -318,6 +318,9 @@ namespace AgentHub.Api.Migrations
                     b.Property<string>("Description")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("EncryptedGitHubToken")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("GitHubUrl")
                         .HasColumnType("TEXT");
 

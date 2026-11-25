@@ -95,28 +95,6 @@ public sealed partial class WorkspaceService(IOptions<WorkspaceOptions> opts)
         finally { sem.Release(); }
     }
 
-    /// Creates an isolated worktree for one agent run, branched from origin/{defaultBranch}.
-    public async Task<RunWorkspace> CreateRunWorkspaceAsync(
-        Guid projectId, Guid runId, Guid taskId, string taskTitle, string defaultBranch, CancellationToken ct = default)
-    {
-        var bare = BareDir(projectId);
-        var path = RunDir(projectId, runId);
-        var branch = $"agent/{taskId:N}-{Slugify(taskTitle)}";
-
-        Directory.CreateDirectory(RunsDir(projectId));
-
-        var sem = LockFor(projectId);
-        await sem.WaitAsync(ct);
-        try
-        {
-            await Git.RunAsync(bare,
-                ["worktree", "add", "-b", branch, path, $"origin/{defaultBranch}"], ct: ct);
-        }
-        finally { sem.Release(); }
-
-        return new RunWorkspace(path, branch, defaultBranch);
-    }
-
     /// Removes the worktree (and local branch). Safe to call twice.
     public async Task CleanupRunAsync(Guid projectId, Guid runId, string? branch = null, CancellationToken ct = default)
     {
@@ -136,9 +114,34 @@ public sealed partial class WorkspaceService(IOptions<WorkspaceOptions> opts)
         finally { sem.Release(); }
     }
 
-    private static string Slugify(string s)
+    public async Task<RunWorkspace> CreateRunWorkspaceAsync(
+        Guid projectId, Guid runId, Guid taskId, string taskTitle,
+        string agentName, int attempt, string defaultBranch, CancellationToken ct = default)
+    {
+        var bare = BareDir(projectId);
+        var path = RunDir(projectId, runId);
+
+        var taskPart = $"{taskId.ToString("N")[..8]}-{Slugify(taskTitle, 24)}";
+        var agentPart = Slugify(agentName, 16);
+        var branch = $"agent/{taskPart}/{agentPart}-try-{attempt}";
+
+        Directory.CreateDirectory(RunsDir(projectId));
+
+        var sem = LockFor(projectId);
+        await sem.WaitAsync(ct);
+        try
+        {
+            await Git.RunAsync(bare,
+                ["worktree", "add", "-b", branch, path, $"origin/{defaultBranch}"], ct: ct);
+        }
+        finally { sem.Release(); }
+
+        return new RunWorkspace(path, branch, defaultBranch);
+    }
+
+    private static string Slugify(string s, int maxLen = 30)
     {
         var slug = Regex.Replace(s.ToLowerInvariant(), "[^a-z0-9]+", "-").Trim('-');
-        return slug.Length == 0 ? "task" : slug[..Math.Min(slug.Length, 30)];
+        return slug.Length == 0 ? "item" : slug[..Math.Min(slug.Length, maxLen)];
     }
 }

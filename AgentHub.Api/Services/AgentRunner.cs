@@ -79,8 +79,13 @@ public sealed class AgentRunner(
                 defaultBranch = await ws.FetchAsync(project.Id, project.GitHubUrl, token, ct);
             }
 
-            w = await ws.CreateRunWorkspaceAsync(project.Id, runId, task.Id, task.Title, defaultBranch, ct);
-            await Log("info", $"Workspace ready on branch {w.Branch} (from {defaultBranch})");
+            var attempt = await db.Runs
+                .Where(r => r.TaskId == task.Id && r.Id != run.Id)
+                .CountAsync(ct) + 1;
+
+            w = await ws.CreateRunWorkspaceAsync(
+                project.Id, runId, task.Id, task.Title, agent.Name, attempt, defaultBranch, ct);
+            await Log("info", $"Attempt #{attempt} by {agent.Name} on branch {w.Branch} (from {defaultBranch})");
 
             var tools = new AgentTools(w.Path);
             var messages = new List<ChatMessage>

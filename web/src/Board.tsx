@@ -112,8 +112,10 @@ export default function Board({ projectId }: { projectId: string }) {
     { group: 'Agents', items: agents.map(a => ({ value: `a:${a.id}`, label: `${a.name}` })) },
   ]
 
-  // Runs come newest-first from the server, so find() returns each task's latest run
-  const latestRun = (taskId: string) => runs.find(r => r.taskId === taskId)
+  // Runs come newest-first from the server
+  const taskRuns = (taskId: string) => runs.filter(r => r.taskId === taskId)
+  const selectedRun = runs.find(r => r.id === logRunId)
+  const modalTaskRuns = selectedRun ? taskRuns(selectedRun.taskId) : []
 
   return (
     <>
@@ -123,18 +125,23 @@ export default function Board({ projectId }: { projectId: string }) {
         <SimpleGrid cols={{ base: 1, md: 4 }}>
           {STATUSES.map(s => (
             <Column key={s} status={s}>
-              {tasks.filter(t => t.status === s).sort((a, b) => a.position - b.position).map(t => (
-                <Card
-                  key={t.id}
-                  task={t}
-                  assignee={assigneeLabel(t)}
-                  run={latestRun(t.id)}
-                  starting={startRun.isPending && startRun.variables === t.id}
-                  onDelete={() => remove.mutate(t.id)}
-                  onRun={() => startRun.mutate(t.id)}
-                  onLogs={() => setLogRunId(latestRun(t.id)?.id ?? null)}
-                />
-              ))}
+              {tasks.filter(t => t.status === s).sort((a, b) => a.position - b.position).map(t => {
+                const tRuns = taskRuns(t.id)
+                const latest = tRuns[0]
+                return (
+                  <Card
+                    key={t.id}
+                    task={t}
+                    assignee={assigneeLabel(t)}
+                    run={latest}
+                    attemptCount={tRuns.length}
+                    starting={startRun.isPending && startRun.variables === t.id}
+                    onDelete={() => remove.mutate(t.id)}
+                    onRun={() => startRun.mutate(t.id)}
+                    onLogs={() => setLogRunId(latest?.id ?? null)}
+                  />
+                )
+              })}
             </Column>
           ))}
         </SimpleGrid>
@@ -152,7 +159,14 @@ export default function Board({ projectId }: { projectId: string }) {
         </form>
       </Modal>
 
-      <RunLogModal projectId={projectId} runId={logRunId} onClose={() => setLogRunId(null)} />
+      <RunLogModal
+        projectId={projectId}
+        runId={logRunId}
+        taskRuns={modalTaskRuns}
+        agents={agents}
+        onSelectRun={setLogRunId}
+        onClose={() => setLogRunId(null)}
+      />
     </>
   )
 }
@@ -168,10 +182,11 @@ function Column({ status, children }: { status: Status; children: React.ReactNod
   )
 }
 
-function Card({ task, assignee, run, starting, onDelete, onRun, onLogs }: {
+function Card({ task, assignee, run, attemptCount, starting, onDelete, onRun, onLogs }: {
   task: Task
   assignee: string | null
   run?: Run
+  attemptCount: number
   starting: boolean
   onDelete: () => void
   onRun: () => void
@@ -204,7 +219,7 @@ function Card({ task, assignee, run, starting, onDelete, onRun, onLogs }: {
               onClick={onLogs}
               leftSection={isActive(run) ? <Loader size={8} /> : undefined}
             >
-              {run.status}
+              {attemptCount > 1 ? `#${attemptCount} · ` : ''}{run.status}
             </Badge>
           )}
           <Button size="compact-xs" variant="light" disabled={isActive(run)} loading={starting} onClick={onRun}>

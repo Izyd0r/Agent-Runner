@@ -14,6 +14,14 @@ import { api } from './api'
 import RunLogModal from './RunLogModal'
 import { COLUMN_COLORS, RUN_COLOR, isActive, type Agent, type BoardColumn, type Member, type Run, type Task } from './types'
 
+type AssigneeGroups = { group: string; items: { value: string; label: string }[] }[]
+type NewTask = { title: string; description: string | null; assignee: string } // assignee: 'a:<id>' | 'u:<id>' | ''
+
+const parseAssignee = (v: string) => ({
+  assigneeUserId: v.startsWith('u:') ? v.slice(2) : null,
+  assigneeAgentId: v.startsWith('a:') ? v.slice(2) : null,
+})
+
 // Columns only shuffle visually while a *column* is being dragged. Without this guard, dragging a task
 // over the board would also make the columns shift to "make room" for it.
 const columnStrategy: SortingStrategy = args =>
@@ -176,6 +184,30 @@ export default function Board({ projectId }: { projectId: string }) {
     onError,
   })
 
+  // Inline "+ Add task" at the bottom of a column: title, prompt and assignee; lands in that column.
+  const [lastAssignee, setLastAssignee] = useState<string>(() => {
+    try { return localStorage.getItem(`lastAssignee:${projectId}`) ?? '' } catch { return '' }
+  })
+
+  const quickAdd = useMutation({
+    mutationFn: (v: NewTask & { columnId: string }) =>
+      api(`${base}/tasks`, {
+        method: 'POST',
+        body: JSON.stringify({
+          title: v.title,
+          description: v.description,
+          ...parseAssignee(v.assignee),
+          columnId: v.columnId,
+        }),
+      }),
+    onSuccess: (_r, v) => {
+      qc.invalidateQueries({ queryKey: key })
+      setLastAssignee(v.assignee)
+      try { localStorage.setItem(`lastAssignee:${projectId}`, v.assignee) } catch { /* ignore */ }
+    },
+    onError,
+  })
+
   const reorderColumns = useMutation({
     mutationFn: (ids: string[]) =>
       api(`${base}/columns/reorder`, { method: 'PUT', body: JSON.stringify({ ids }) }),
@@ -306,6 +338,8 @@ export default function Board({ projectId }: { projectId: string }) {
     { group: 'People', items: members.map(m => ({ value: `u:${m.userId}`, label: m.email })) },
   ]
 
+  const defaultAssignee = assigneeData.some(g => g.items.some(i => i.value === lastAssignee)) ? lastAssignee : ''
+
   const taskRuns = (taskId: string) => runs.filter(r => r.taskId === taskId)
   const selectedRun = runs.find(r => r.id === logRunId)
   const modalTaskRuns = selectedRun ? taskRuns(selectedRun.taskId) : []
@@ -336,6 +370,9 @@ export default function Board({ projectId }: { projectId: string }) {
                 count={colTasks.length}
                 onEdit={() => setEditingColumn(col)}
                 onDelete={() => deleteColumn(col)}
+                assigneeData={assigneeData}
+                defaultAssignee={defaultAssignee}
+                onAddTask={v => quickAdd.mutateAsync({ columnId: col.id, ...v })}
                 onMoveLeft={idx > 0 ? () => moveColumnTo(col.id, idx - 1) : undefined}
                 onMoveRight={idx < sortedColumns.length - 1 ? () => moveColumnTo(col.id, idx + 1) : undefined}
               >
@@ -664,11 +701,14 @@ export default function Board({ projectId }: { projectId: string }) {
   )
 }
 
-function ColumnView({ column, count, onEdit, onDelete, onMoveLeft, onMoveRight, children }: {
+function ColumnView({ column, count, onEdit, onDelete, onAddTask, assigneeData, defaultAssignee, onMoveLeft, onMoveRight, children }: {
   column: BoardColumn
   count: number
   onEdit: () => void
   onDelete: () => void
+  onAddTask: (v: NewTask) => Promise<unknown>
+  assigneeData: AssigneeGroups
+  defaultAssignee: string
   onMoveLeft?: () => void
   onMoveRight?: () => void
   children: React.ReactNode
@@ -772,7 +812,96 @@ function ColumnView({ column, count, onEdit, onDelete, onMoveLeft, onMoveRight, 
           </Paper>
         )}
       </Stack>
+
+      <AddTask onAdd={onAddTask} assigneeData={assigneeData} defaultAssignee={defaultAssignee} />
     </Paper>
+  )
+}
+
+function AddTask({ onAdd, assigneeData, defaultAssignee }: {
+  onAdd: (v: NewTask) => Promise<unknown>
+  assigneeData: AssigneeGroups
+  defaultAssignee: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [title, setTitle] = useState('')
+  const [description, setDescription] = useState('')
+  const [assignee, setAssignee] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const openForm = () => { setAssignee(defaultAssignee); setOpen(true) }
+  const close = () => { setOpen(false); setTitle(''); setDescription('') }
+
+  const submit = async () => {
+    const t = title.trim()
+    if (!t || busy) return
+    setBusy(true)
+    try {
+      await onAdd({ title: t, description: description.trim() || null, assignee })
+      // stay open for the next task; keep the assignee, clear the text
+      setTitle('')
+      setDescription('')
+    } catch {
+      // the mutation's onError already shows a toast; keep everything so nothing is lost
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (!open) {
+    return (
+      <Button variant="subtle" color="gray" size="compact-sm" fullWidth justify="flex-start" mt="xs" onClick={openForm}>
+        + Add task
+      </Button>
+    )
+  }
+
+  return (
+    <Stack gap={6} mt="xs">
+      <TextInput
+        autoFocus
+        size="xs"
+        placeholder="Task title…"
+        value={title}
+        onChange={e => setTitle(e.currentTarget.value)}
+        onKeyDown={e => {
+          if (e.nativeEvent.isComposing) return
+          if (e.key === 'Enter') { e.preventDefault(); void submit() }
+          if (e.key === 'Escape') close()
+        }}
+      />
+      <Textarea
+        size="xs"
+        autosize
+        minRows={2}
+        maxRows={8}
+        placeholder="Prompt / instructions (optional)"
+        value={description}
+        onChange={e => setDescription(e.currentTarget.value)}
+        onKeyDown={e => {
+          if (e.nativeEvent.isComposing) return
+          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); void submit() }
+          if (e.key === 'Escape') close()
+        }}
+      />
+      <Select
+        size="xs"
+        data={assigneeData}
+        clearable
+        placeholder="Unassigned"
+        value={assignee || null}
+        onChange={v => setAssignee(v ?? '')}
+      />
+      <Group gap="xs" justify="space-between">
+        <Group gap="xs">
+          <Button size="compact-xs" onClick={() => void submit()} loading={busy} disabled={!title.trim()}>
+            Add task
+          </Button>
+          <Button size="compact-xs" variant="default" onClick={close}>Cancel</Button>
+        </Group>
+        <Text size="10px" c="dimmed">Enter in title · Ctrl+Enter in prompt</Text>
+      </Group>
+    </Stack>
   )
 }
 

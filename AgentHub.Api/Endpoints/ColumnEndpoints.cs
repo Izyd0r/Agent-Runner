@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 public record ColumnDto(Guid Id, string Name, string Color, int Position, bool IsReviewTarget);
 public record ColumnCreate(string Name, string? Color);
 public record ColumnUpdate(string Name, string Color, bool IsReviewTarget);
+public record ColumnReorder(List<Guid> Ids);
 
 public static class ColumnEndpoints
 {
@@ -49,6 +50,21 @@ public static class ColumnEndpoints
             db.Columns.Add(col);
             await db.SaveChangesAsync();
             return Results.Created($"/api/projects/{projectId}/columns/{col.Id}", ToDto(col));
+        });
+
+        // Body: { ids: [...] } = every column of the project, in the new left-to-right order.
+        g.MapPut("/reorder", async (Guid projectId, ColumnReorder req, AppDb db) =>
+        {
+            var cols = await db.Columns.Where(c => c.ProjectId == projectId).ToListAsync();
+            var ids = req.Ids ?? [];
+            if (ids.Count != cols.Count || ids.Distinct().Count() != ids.Count ||
+                !ids.All(id => cols.Any(c => c.Id == id)))
+                return Results.BadRequest("ids must list every column of this project exactly once");
+
+            for (var i = 0; i < ids.Count; i++)
+                cols.First(c => c.Id == ids[i]).Position = i + 1;
+            await db.SaveChangesAsync();
+            return Results.Ok(cols.OrderBy(c => c.Position).Select(ToDto));
         });
 
         g.MapPut("/{id:guid}", async (Guid projectId, Guid id, ColumnUpdate req, AppDb db) =>

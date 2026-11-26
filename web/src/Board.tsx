@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { DndContext, PointerSensor, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
+import { DndContext, PointerSensor, useDraggable, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
+import { SortableContext, arrayMove, horizontalListSortingStrategy, useSortable, type SortingStrategy } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import {
   ActionIcon, Badge, Box, Button, Checkbox, Code, Divider, Drawer, Group, Loader, Menu,
   Modal, Paper, Select, SimpleGrid, Stack, Text, TextInput, Textarea, Title, Tooltip,
@@ -11,6 +13,11 @@ import { notifications } from '@mantine/notifications'
 import { api } from './api'
 import RunLogModal from './RunLogModal'
 import { COLUMN_COLORS, RUN_COLOR, isActive, type Agent, type BoardColumn, type Member, type Run, type Task } from './types'
+
+// Columns only shuffle visually while a *column* is being dragged. Without this guard, dragging a task
+// over the board would also make the columns shift to "make room" for it.
+const columnStrategy: SortingStrategy = args =>
+  args.activeIndex === -1 ? null : horizontalListSortingStrategy(args)
 
 function formatDuration(startIso: string, endIso?: string | null): string {
   const start = new Date(startIso).getTime()
@@ -169,6 +176,20 @@ export default function Board({ projectId }: { projectId: string }) {
     onError,
   })
 
+  const reorderColumns = useMutation({
+    mutationFn: (ids: string[]) =>
+      api(`${base}/columns/reorder`, { method: 'PUT', body: JSON.stringify({ ids }) }),
+    onMutate: async ids => {
+      await qc.cancelQueries({ queryKey: colKey })
+      const prev = qc.getQueryData<BoardColumn[]>(colKey)
+      qc.setQueryData<BoardColumn[]>(colKey, old =>
+        old?.map(c => ({ ...c, position: ids.indexOf(c.id) + 1 })))
+      return { prev }
+    },
+    onError: (e, _v, ctx) => { qc.setQueryData(colKey, ctx?.prev); onError(e) },
+    onSettled: () => qc.invalidateQueries({ queryKey: colKey }),
+  })
+
   const startRun = useMutation({
     mutationFn: (taskId: string) => api<Run>(`${base}/tasks/${taskId}/run`, { method: 'POST' }),
     onSuccess: r => {
@@ -185,8 +206,21 @@ export default function Board({ projectId }: { projectId: string }) {
     move.mutate({ id: task.id, columnId, position: maxPos + 1 })
   }
 
+  function moveColumnTo(id: string, toIndex: number) {
+    const ids = sortedColumns.map(c => c.id)
+    const from = ids.indexOf(id)
+    if (from < 0 || toIndex < 0 || toIndex >= ids.length || from === toIndex) return
+    reorderColumns.mutate(arrayMove(ids, from, toIndex))
+  }
+
   function onDragEnd(e: DragEndEvent) {
     if (!e.over) return
+
+    if (e.active.data.current?.type === 'column') {
+      moveColumnTo(e.active.id as string, sortedColumns.findIndex(c => c.id === e.over!.id))
+      return
+    }
+
     const task = tasks.find(t => t.id === e.active.id)
     if (!task) return
     moveTask(task, e.over.id as string)
@@ -291,8 +325,9 @@ export default function Board({ projectId }: { projectId: string }) {
       </Group>
 
       <DndContext sensors={sensors} onDragEnd={onDragEnd}>
+        <SortableContext items={sortedColumns.map(c => c.id)} strategy={columnStrategy}>
         <Group wrap="nowrap" align="flex-start" gap="md" style={{ overflowX: 'auto', paddingBottom: 12 }}>
-          {sortedColumns.map(col => {
+          {sortedColumns.map((col, idx) => {
             const colTasks = tasks.filter(t => t.columnId === col.id).sort((a, b) => a.position - b.position)
             return (
               <ColumnView
@@ -301,6 +336,8 @@ export default function Board({ projectId }: { projectId: string }) {
                 count={colTasks.length}
                 onEdit={() => setEditingColumn(col)}
                 onDelete={() => deleteColumn(col)}
+                onMoveLeft={idx > 0 ? () => moveColumnTo(col.id, idx - 1) : undefined}
+                onMoveRight={idx < sortedColumns.length - 1 ? () => moveColumnTo(col.id, idx + 1) : undefined}
               >
                 {colTasks.map(t => {
                   const tRuns = taskRuns(t.id)
@@ -328,6 +365,7 @@ export default function Board({ projectId }: { projectId: string }) {
           })}
           <AddColumn onAdd={name => addColumn.mutate(name)} loading={addColumn.isPending} />
         </Group>
+        </SortableContext>
       </DndContext>
 
       {/* Click-to-edit Task Detail Drawer */}
@@ -626,14 +664,22 @@ export default function Board({ projectId }: { projectId: string }) {
   )
 }
 
-function ColumnView({ column, count, onEdit, onDelete, children }: {
+function ColumnView({ column, count, onEdit, onDelete, onMoveLeft, onMoveRight, children }: {
   column: BoardColumn
   count: number
   onEdit: () => void
   onDelete: () => void
+  onMoveLeft?: () => void
+  onMoveRight?: () => void
   children: React.ReactNode
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: column.id })
+  // Sortable = draggable (to reorder columns, via the header handle) + droppable (tasks land on it).
+  const {
+    attributes, listeners, setNodeRef, setActivatorNodeRef,
+    transform, transition, isDragging, isOver, active,
+  } = useSortable({ id: column.id, data: { type: 'column' } })
+  const taskIsOver = isOver && active?.data.current?.type === 'task'
+
   return (
     <Paper
       ref={setNodeRef}
@@ -646,12 +692,30 @@ function ColumnView({ column, count, onEdit, onDelete, children }: {
       style={{
         flexShrink: 0,
         backgroundColor: 'var(--mantine-color-dark-8)',
-        outline: isOver ? '2px solid var(--mantine-color-teal-6)' : undefined,
-        transition: 'outline 120ms ease',
+        outline: taskIsOver ? '2px solid var(--mantine-color-teal-6)' : undefined,
+        transform: CSS.Translate.toString(transform),
+        transition: transition ?? 'outline 120ms ease',
+        opacity: isDragging ? 0.6 : 1,
+        zIndex: isDragging ? 10 : undefined,
+        position: 'relative',
       }}
     >
       <Group justify="space-between" mb="sm" wrap="nowrap">
         <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
+          <Tooltip label="Drag to reorder column" openDelay={400}>
+            <ActionIcon
+              ref={setActivatorNodeRef}
+              size="xs"
+              variant="subtle"
+              color="gray"
+              aria-label={`Drag column ${column.name}`}
+              {...attributes}
+              {...listeners}
+              style={{ cursor: 'grab', touchAction: 'none', flexShrink: 0 }}
+            >
+              ⋮⋮
+            </ActionIcon>
+          </Tooltip>
           <Box
             w={8}
             h={8}
@@ -682,6 +746,9 @@ function ColumnView({ column, count, onEdit, onDelete, children }: {
             </Menu.Target>
             <Menu.Dropdown>
               <Menu.Item onClick={onEdit}>Edit column</Menu.Item>
+              <Menu.Item disabled={!onMoveLeft} onClick={onMoveLeft}>Move left</Menu.Item>
+              <Menu.Item disabled={!onMoveRight} onClick={onMoveRight}>Move right</Menu.Item>
+              <Menu.Divider />
               <Menu.Item color="red" onClick={onDelete}>Delete column</Menu.Item>
             </Menu.Dropdown>
           </Menu>
@@ -757,7 +824,7 @@ function TaskCard({ task, column, columns, assignee, run, attemptCount, starting
   onRun: () => void
   onLogs: () => void
 }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: task.id })
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: task.id, data: { type: 'task' } })
 
   const active = isActive(run)
   const accentColor = run ? RUN_COLOR[run.status] : column?.color ?? 'gray'

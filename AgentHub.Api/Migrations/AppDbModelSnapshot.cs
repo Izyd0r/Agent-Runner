@@ -184,6 +184,36 @@ namespace AgentHub.Api.Migrations
                     b.ToTable("AspNetUsers", (string)null);
                 });
 
+            modelBuilder.Entity("BoardColumn", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Color")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsReviewTarget")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("ProjectId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProjectId", "Position");
+
+                    b.ToTable("Columns");
+                });
+
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRole", b =>
                 {
                     b.Property<string>("Id")
@@ -370,6 +400,9 @@ namespace AgentHub.Api.Migrations
                     b.Property<string>("AssigneeUserId")
                         .HasColumnType("TEXT");
 
+                    b.Property<Guid>("ColumnId")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
@@ -382,10 +415,6 @@ namespace AgentHub.Api.Migrations
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -393,6 +422,8 @@ namespace AgentHub.Api.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("AssigneeAgentId");
+
+                    b.HasIndex("ColumnId");
 
                     b.HasIndex("ProjectId");
 
@@ -428,6 +459,15 @@ namespace AgentHub.Api.Migrations
                     b.HasOne("AgentRun", null)
                         .WithMany()
                         .HasForeignKey("RunId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("BoardColumn", b =>
+                {
+                    b.HasOne("Project", null)
+                        .WithMany()
+                        .HasForeignKey("ProjectId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
@@ -506,6 +546,12 @@ namespace AgentHub.Api.Migrations
                         .WithMany()
                         .HasForeignKey("AssigneeAgentId")
                         .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("BoardColumn", null)
+                        .WithMany()
+                        .HasForeignKey("ColumnId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
 
                     b.HasOne("Project", null)
                         .WithMany()

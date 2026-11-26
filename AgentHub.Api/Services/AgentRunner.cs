@@ -176,7 +176,24 @@ public sealed class AgentRunner(
             }
 
             run.Status = finished ? RunStatus.Succeeded : RunStatus.Failed;
-            if (finished) task.Status = TaskItemStatus.Review;
+            if (finished)
+            {
+                // Move the task to the project's "review" column, if one is configured.
+                var reviewColId = await db.Columns
+                    .Where(c => c.ProjectId == project.Id && c.IsReviewTarget)
+                    .Select(c => (Guid?)c.Id)
+                    .FirstOrDefaultAsync(ct);
+
+                if (reviewColId is { } colId)
+                {
+                    var maxPos = await db.Tasks
+                        .Where(t => t.ColumnId == colId)
+                        .Select(t => (int?)t.Position)
+                        .MaxAsync(ct) ?? 0;
+                    task.ColumnId = colId;
+                    task.Position = maxPos + 1;
+                }
+            }
         }
         catch (Exception e)
         {

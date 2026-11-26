@@ -7,6 +7,7 @@ public class AppDb(DbContextOptions<AppDb> options) : IdentityDbContext<AppUser>
     public DbSet<ProjectMember> Members => Set<ProjectMember>();
     public DbSet<Agent> Agents => Set<Agent>();
     public DbSet<TaskItem> Tasks => Set<TaskItem>();
+    public DbSet<BoardColumn> Columns => Set<BoardColumn>();
     public DbSet<AgentRun> Runs => Set<AgentRun>();
     public DbSet<AgentRunLog> RunLogs => Set<AgentRunLog>();
 
@@ -19,6 +20,11 @@ public class AppDb(DbContextOptions<AppDb> options) : IdentityDbContext<AppUser>
 
         b.Entity<Agent>().HasOne<Project>().WithMany().HasForeignKey(a => a.ProjectId);
         b.Entity<TaskItem>().HasOne<Project>().WithMany().HasForeignKey(t => t.ProjectId);
+
+        b.Entity<BoardColumn>().HasOne<Project>().WithMany().HasForeignKey(c => c.ProjectId);
+        b.Entity<BoardColumn>().HasIndex(c => new { c.ProjectId, c.Position });
+        b.Entity<TaskItem>().HasOne<BoardColumn>().WithMany()
+            .HasForeignKey(t => t.ColumnId).OnDelete(DeleteBehavior.NoAction);
         b.Entity<TaskItem>().HasOne<Agent>().WithMany()
             .HasForeignKey(t => t.AssigneeAgentId).OnDelete(DeleteBehavior.SetNull);
 

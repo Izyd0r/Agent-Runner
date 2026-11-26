@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { DndContext, PointerSensor, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import {
-  ActionIcon, Badge, Box, Button, Code, Divider, Drawer, Group, Loader, Menu,
+  ActionIcon, Badge, Box, Button, Checkbox, Code, Divider, Drawer, Group, Loader, Menu,
   Modal, Paper, Select, SimpleGrid, Stack, Text, TextInput, Textarea, Title, Tooltip,
 } from '@mantine/core'
 import { useDisclosure, usePrevious } from '@mantine/hooks'
@@ -10,21 +10,7 @@ import { useForm } from '@mantine/form'
 import { notifications } from '@mantine/notifications'
 import { api } from './api'
 import RunLogModal from './RunLogModal'
-import { RUN_COLOR, STATUSES, isActive, type Agent, type Member, type Run, type Status, type Task } from './types'
-
-const STATUS_COLOR: Record<Status, string> = {
-  Todo: 'gray',
-  InProgress: 'blue',
-  Review: 'yellow',
-  Done: 'teal',
-}
-
-const STATUS_LABEL: Record<Status, string> = {
-  Todo: 'To Do',
-  InProgress: 'In Progress',
-  Review: 'In Review',
-  Done: 'Done',
-}
+import { COLUMN_COLORS, RUN_COLOR, isActive, type Agent, type BoardColumn, type Member, type Run, type Task } from './types'
 
 function formatDuration(startIso: string, endIso?: string | null): string {
   const start = new Date(startIso).getTime()
@@ -41,6 +27,7 @@ export default function Board({ projectId }: { projectId: string }) {
   const [createOpened, { open: openCreate, close: closeCreate }] = useDisclosure(false)
   const [detailTaskId, setDetailTaskId] = useState<string | null>(null)
   const [logRunId, setLogRunId] = useState<string | null>(null)
+  const [editingColumn, setEditingColumn] = useState<BoardColumn | null>(null)
 
   // Inline editing state inside the Task Drawer
   const [editingField, setEditingField] = useState<'title' | 'description' | null>(null)
@@ -51,6 +38,7 @@ export default function Board({ projectId }: { projectId: string }) {
 
   const key = ['tasks', projectId]
   const runsKey = ['runs', projectId]
+  const colKey = ['columns', projectId]
 
   const { data: runs = [] } = useQuery({
     queryKey: runsKey,
@@ -64,6 +52,13 @@ export default function Board({ projectId }: { projectId: string }) {
     queryFn: () => api<Task[]>(`${base}/tasks`),
     refetchInterval: anyActive ? 2000 : false,
   })
+  const { data: columns = [] } = useQuery({
+    queryKey: colKey,
+    queryFn: () => api<BoardColumn[]>(`${base}/columns`),
+  })
+  const sortedColumns = [...columns].sort((a, b) => a.position - b.position)
+  const columnOf = (t: Task) => columns.find(c => c.id === t.columnId)
+
   const { data: agents = [] } = useQuery({ queryKey: ['agents', projectId], queryFn: () => api<Agent[]>(`${base}/agents`) })
   const { data: members = [] } = useQuery({ queryKey: ['members', projectId], queryFn: () => api<Member[]>(`${base}/members`) })
 
@@ -75,7 +70,7 @@ export default function Board({ projectId }: { projectId: string }) {
   const onError = (e: unknown) => notifications.show({ color: 'red', message: (e as Error).message })
 
   const createForm = useForm({
-    initialValues: { title: '', description: '', assignee: '' },
+    initialValues: { title: '', description: '', assignee: '', columnId: '' },
     validate: { title: v => (v.trim() ? null : 'Required') },
   })
 
@@ -86,6 +81,7 @@ export default function Board({ projectId }: { projectId: string }) {
         body: JSON.stringify({
           title: v.title.trim(),
           description: v.description.trim() || null,
+          columnId: v.columnId || null,
           assigneeUserId: v.assignee.startsWith('u:') ? v.assignee.slice(2) : null,
           assigneeAgentId: v.assignee.startsWith('a:') ? v.assignee.slice(2) : null,
         }),
@@ -122,12 +118,12 @@ export default function Board({ projectId }: { projectId: string }) {
   })
 
   const move = useMutation({
-    mutationFn: (v: { id: string; status: Status; position: number }) =>
-      api(`${base}/tasks/${v.id}/move`, { method: 'PATCH', body: JSON.stringify({ status: v.status, position: v.position }) }),
+    mutationFn: (v: { id: string; columnId: string; position: number }) =>
+      api(`${base}/tasks/${v.id}/move`, { method: 'PATCH', body: JSON.stringify({ columnId: v.columnId, position: v.position }) }),
     onMutate: async v => {
       await qc.cancelQueries({ queryKey: key })
       const prev = qc.getQueryData<Task[]>(key)
-      qc.setQueryData<Task[]>(key, old => old?.map(t => (t.id === v.id ? { ...t, status: v.status, position: v.position } : t)))
+      qc.setQueryData<Task[]>(key, old => old?.map(t => (t.id === v.id ? { ...t, columnId: v.columnId, position: v.position } : t)))
       return { prev }
     },
     onError: (e, _v, ctx) => { qc.setQueryData(key, ctx?.prev); onError(e) },
@@ -143,6 +139,36 @@ export default function Board({ projectId }: { projectId: string }) {
     onError,
   })
 
+  const addColumn = useMutation({
+    mutationFn: (name: string) =>
+      api(`${base}/columns`, { method: 'POST', body: JSON.stringify({ name, color: 'gray' }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: colKey }),
+    onError,
+  })
+
+  const updateColumn = useMutation({
+    mutationFn: (c: BoardColumn) =>
+      api(`${base}/columns/${c.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ name: c.name, color: c.color, isReviewTarget: c.isReviewTarget }),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: colKey })
+      setEditingColumn(null)
+    },
+    onError,
+  })
+
+  const removeColumn = useMutation({
+    mutationFn: (v: { id: string; moveTo: string }) =>
+      api(`${base}/columns/${v.id}?moveTo=${v.moveTo}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: colKey })
+      qc.invalidateQueries({ queryKey: key })
+    },
+    onError,
+  })
+
   const startRun = useMutation({
     mutationFn: (taskId: string) => api<Run>(`${base}/tasks/${taskId}/run`, { method: 'POST' }),
     onSuccess: r => {
@@ -153,18 +179,28 @@ export default function Board({ projectId }: { projectId: string }) {
     onError,
   })
 
-  function changeTaskStatus(task: Task, status: Status) {
-    if (task.status === status) return
-    const maxPos = Math.max(0, ...tasks.filter(t => t.status === status).map(t => t.position))
-    move.mutate({ id: task.id, status, position: maxPos + 1 })
+  function moveTask(task: Task, columnId: string) {
+    if (task.columnId === columnId) return
+    const maxPos = Math.max(0, ...tasks.filter(t => t.columnId === columnId).map(t => t.position))
+    move.mutate({ id: task.id, columnId, position: maxPos + 1 })
   }
 
   function onDragEnd(e: DragEndEvent) {
     if (!e.over) return
-    const status = e.over.id as Status
     const task = tasks.find(t => t.id === e.active.id)
     if (!task) return
-    changeTaskStatus(task, status)
+    moveTask(task, e.over.id as string)
+  }
+
+  function deleteColumn(col: BoardColumn) {
+    const target = sortedColumns.find(c => c.id !== col.id)
+    if (!target) {
+      notifications.show({ color: 'red', message: 'A board needs at least one column.' })
+      return
+    }
+    const n = tasks.filter(t => t.columnId === col.id).length
+    if (n > 0 && !window.confirm(`Move ${n} task(s) to "${target.name}" and delete "${col.name}"?`)) return
+    removeColumn.mutate({ id: col.id, moveTo: target.id })
   }
 
   const openTaskDrawer = (t: Task) => {
@@ -241,6 +277,7 @@ export default function Board({ projectId }: { projectId: string }) {
   const modalTaskRuns = selectedRun ? taskRuns(selectedRun.taskId) : []
 
   const detailTask = tasks.find(t => t.id === detailTaskId) ?? null
+  const detailColumn = detailTask ? columnOf(detailTask) : undefined
   const detailRuns = detailTask ? taskRuns(detailTask.id) : []
   const detailLatestRun = detailRuns[0]
 
@@ -254,11 +291,17 @@ export default function Board({ projectId }: { projectId: string }) {
       </Group>
 
       <DndContext sensors={sensors} onDragEnd={onDragEnd}>
-        <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
-          {STATUSES.map(s => {
-            const colTasks = tasks.filter(t => t.status === s).sort((a, b) => a.position - b.position)
+        <Group wrap="nowrap" align="flex-start" gap="md" style={{ overflowX: 'auto', paddingBottom: 12 }}>
+          {sortedColumns.map(col => {
+            const colTasks = tasks.filter(t => t.columnId === col.id).sort((a, b) => a.position - b.position)
             return (
-              <Column key={s} status={s} count={colTasks.length}>
+              <ColumnView
+                key={col.id}
+                column={col}
+                count={colTasks.length}
+                onEdit={() => setEditingColumn(col)}
+                onDelete={() => deleteColumn(col)}
+              >
                 {colTasks.map(t => {
                   const tRuns = taskRuns(t.id)
                   const latest = tRuns[0]
@@ -266,22 +309,25 @@ export default function Board({ projectId }: { projectId: string }) {
                     <TaskCard
                       key={t.id}
                       task={t}
+                      column={col}
+                      columns={sortedColumns}
                       assignee={assigneeInfo(t)}
                       run={latest}
                       attemptCount={tRuns.length}
                       starting={startRun.isPending && startRun.variables === t.id}
                       onOpen={() => openTaskDrawer(t)}
                       onDelete={() => remove.mutate(t.id)}
-                      onMoveStatus={next => changeTaskStatus(t, next)}
+                      onMoveColumn={id => moveTask(t, id)}
                       onRun={() => startRun.mutate(t.id)}
                       onLogs={() => setLogRunId(latest?.id ?? null)}
                     />
                   )
                 })}
-              </Column>
+              </ColumnView>
             )
           })}
-        </SimpleGrid>
+          <AddColumn onAdd={name => addColumn.mutate(name)} loading={addColumn.isPending} />
+        </Group>
       </DndContext>
 
       {/* Click-to-edit Task Detail Drawer */}
@@ -293,8 +339,8 @@ export default function Board({ projectId }: { projectId: string }) {
         title={
           detailTask && (
             <Group gap="xs">
-              <Badge color={STATUS_COLOR[detailTask.status]} variant="light">
-                {STATUS_LABEL[detailTask.status]}
+              <Badge color={detailColumn?.color ?? 'gray'} variant="light">
+                {detailColumn?.name ?? '—'}
               </Badge>
               <Text size="xs" c="dimmed" ff="monospace">
                 #{detailTask.id.slice(0, 8)}
@@ -344,14 +390,14 @@ export default function Board({ projectId }: { projectId: string }) {
               </Button>
             </Group>
 
-            {/* Inline Status & Assignee Pickers */}
+            {/* Inline Column & Assignee Pickers */}
             <SimpleGrid cols={2}>
               <Select
-                label="Status"
+                label="Column"
                 size="xs"
-                data={STATUSES.map(st => ({ value: st, label: STATUS_LABEL[st] }))}
-                value={detailTask.status}
-                onChange={v => v && changeTaskStatus(detailTask, v as Status)}
+                data={sortedColumns.map(c => ({ value: c.id, label: c.name }))}
+                value={detailTask.columnId}
+                onChange={v => v && moveTask(detailTask, v)}
                 allowDeselect={false}
               />
               <Select
@@ -515,6 +561,14 @@ export default function Board({ projectId }: { projectId: string }) {
               minRows={4}
               {...createForm.getInputProps('description')}
             />
+            <Select
+              label="Column"
+              placeholder={sortedColumns[0]?.name}
+              data={sortedColumns.map(c => ({ value: c.id, label: c.name }))}
+              clearable
+              {...createForm.getInputProps('columnId')}
+              onChange={v => createForm.setFieldValue('columnId', v ?? '')}
+            />
             <Select label="Assignee" data={assigneeData} clearable placeholder="Unassigned"
               {...createForm.getInputProps('assignee')} onChange={v => createForm.setFieldValue('assignee', v ?? '')} />
             <Group justify="flex-end">
@@ -523,6 +577,41 @@ export default function Board({ projectId }: { projectId: string }) {
             </Group>
           </Stack>
         </form>
+      </Modal>
+
+      <Modal opened={!!editingColumn} onClose={() => setEditingColumn(null)} title="Edit column">
+        {editingColumn && (
+          <Stack>
+            <TextInput
+              label="Name"
+              data-autofocus
+              value={editingColumn.name}
+              onChange={e => setEditingColumn({ ...editingColumn, name: e.currentTarget.value })}
+            />
+            <Select
+              label="Color"
+              data={COLUMN_COLORS}
+              value={editingColumn.color}
+              allowDeselect={false}
+              onChange={v => v && setEditingColumn({ ...editingColumn, color: v })}
+            />
+            <Checkbox
+              label="Move tasks here when an agent run succeeds"
+              checked={editingColumn.isReviewTarget}
+              onChange={e => setEditingColumn({ ...editingColumn, isReviewTarget: e.currentTarget.checked })}
+            />
+            <Group justify="flex-end">
+              <Button variant="default" onClick={() => setEditingColumn(null)}>Cancel</Button>
+              <Button
+                loading={updateColumn.isPending}
+                disabled={!editingColumn.name.trim()}
+                onClick={() => updateColumn.mutate({ ...editingColumn, name: editingColumn.name.trim() })}
+              >
+                Save
+              </Button>
+            </Group>
+          </Stack>
+        )}
       </Modal>
 
       <RunLogModal
@@ -537,38 +626,66 @@ export default function Board({ projectId }: { projectId: string }) {
   )
 }
 
-function Column({ status, count, children }: { status: Status; count: number; children: React.ReactNode }) {
-  const { setNodeRef, isOver } = useDroppable({ id: status })
+function ColumnView({ column, count, onEdit, onDelete, children }: {
+  column: BoardColumn
+  count: number
+  onEdit: () => void
+  onDelete: () => void
+  children: React.ReactNode
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: column.id })
   return (
     <Paper
       ref={setNodeRef}
       withBorder
       p="sm"
       mih={420}
+      w={300}
+      miw={300}
       radius="md"
       style={{
+        flexShrink: 0,
         backgroundColor: 'var(--mantine-color-dark-8)',
         outline: isOver ? '2px solid var(--mantine-color-teal-6)' : undefined,
         transition: 'outline 120ms ease',
       }}
     >
-      <Group justify="space-between" mb="sm">
-        <Group gap="xs">
+      <Group justify="space-between" mb="sm" wrap="nowrap">
+        <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
           <Box
             w={8}
             h={8}
             style={{
               borderRadius: '50%',
-              backgroundColor: `var(--mantine-color-${STATUS_COLOR[status]}-5)`,
+              flexShrink: 0,
+              backgroundColor: `var(--mantine-color-${column.color}-5)`,
             }}
           />
-          <Title order={6} tt="uppercase" c="dimmed" style={{ letterSpacing: 0.5 }}>
-            {STATUS_LABEL[status]}
+          <Title order={6} tt="uppercase" c="dimmed" lineClamp={1} style={{ letterSpacing: 0.5 }}>
+            {column.name}
           </Title>
+          {column.isReviewTarget && (
+            <Tooltip label="Successful agent runs land here">
+              <Badge size="xs" variant="outline" color="gray">PR</Badge>
+            </Tooltip>
+          )}
         </Group>
-        <Badge size="xs" variant="light" color={STATUS_COLOR[status]} circle>
-          {count}
-        </Badge>
+        <Group gap={6} wrap="nowrap">
+          <Badge size="xs" variant="light" color={column.color} circle>
+            {count}
+          </Badge>
+          <Menu position="bottom-end" withinPortal>
+            <Menu.Target>
+              <ActionIcon size="xs" variant="subtle" color="gray" aria-label={`Actions for column ${column.name}`}>
+                ⋯
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item onClick={onEdit}>Edit column</Menu.Item>
+              <Menu.Item color="red" onClick={onDelete}>Delete column</Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
+        </Group>
       </Group>
 
       <Stack gap="xs">
@@ -592,22 +709,58 @@ function Column({ status, count, children }: { status: Status; count: number; ch
   )
 }
 
-function TaskCard({ task, assignee, run, attemptCount, starting, onOpen, onDelete, onMoveStatus, onRun, onLogs }: {
+function AddColumn({ onAdd, loading }: { onAdd: (name: string) => void; loading: boolean }) {
+  const [adding, setAdding] = useState(false)
+  const [name, setName] = useState('')
+
+  const submit = () => {
+    if (name.trim()) onAdd(name.trim())
+    setName('')
+    setAdding(false)
+  }
+
+  if (!adding) {
+    return (
+      <Button variant="default" w={300} miw={300} loading={loading} onClick={() => setAdding(true)} style={{ flexShrink: 0 }}>
+        + Add column
+      </Button>
+    )
+  }
+  return (
+    <Paper withBorder p="sm" radius="md" w={300} miw={300} style={{ flexShrink: 0 }}>
+      <TextInput
+        autoFocus
+        placeholder="Column name"
+        value={name}
+        onChange={e => setName(e.currentTarget.value)}
+        onBlur={submit}
+        onKeyDown={e => {
+          if (e.key === 'Enter') submit()
+          if (e.key === 'Escape') { setName(''); setAdding(false) }
+        }}
+      />
+    </Paper>
+  )
+}
+
+function TaskCard({ task, column, columns, assignee, run, attemptCount, starting, onOpen, onDelete, onMoveColumn, onRun, onLogs }: {
   task: Task
+  column?: BoardColumn
+  columns: BoardColumn[]
   assignee: { label: string; isAgent: boolean; model?: string } | null
   run?: Run
   attemptCount: number
   starting: boolean
   onOpen: () => void
   onDelete: () => void
-  onMoveStatus: (status: Status) => void
+  onMoveColumn: (columnId: string) => void
   onRun: () => void
   onLogs: () => void
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: task.id })
 
   const active = isActive(run)
-  const accentColor = run ? RUN_COLOR[run.status] : STATUS_COLOR[task.status]
+  const accentColor = run ? RUN_COLOR[run.status] : column?.color ?? 'gray'
 
   return (
     <Paper
@@ -657,9 +810,9 @@ function TaskCard({ task, assignee, run, attemptCount, starting, onOpen, onDelet
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Label>Move to</Menu.Label>
-                {STATUSES.filter(s => s !== task.status).map(s => (
-                  <Menu.Item key={s} onClick={() => onMoveStatus(s)}>
-                    {STATUS_LABEL[s]}
+                {columns.filter(c => c.id !== task.columnId).map(c => (
+                  <Menu.Item key={c.id} onClick={() => onMoveColumn(c.id)}>
+                    {c.name}
                   </Menu.Item>
                 ))}
                 <Menu.Divider />

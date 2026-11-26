@@ -1,5 +1,12 @@
-export type Status = 'Todo' | 'InProgress' | 'Review' | 'Done'
-export const STATUSES: Status[] = ['Todo', 'InProgress', 'Review', 'Done']
+export interface BoardColumn {
+  id: string
+  name: string
+  color: string // Mantine color name
+  position: number
+  isReviewTarget: boolean // finished agent runs move their task here
+}
+
+export const COLUMN_COLORS = ['gray', 'blue', 'yellow', 'teal', 'violet', 'red', 'orange', 'pink']
 
 export interface Project {
   id: string
@@ -9,7 +16,7 @@ export interface Project {
   hasGitHubToken?: boolean
 }
 export interface Task {
-  id: string; title: string; description?: string; status: Status; position: number
+  id: string; title: string; description?: string | null; columnId: string; position: number
   assigneeUserId?: string | null; assigneeAgentId?: string | null
 }
 export interface Agent { id: string; name: string; model: string; systemPrompt: string; temperature: number }

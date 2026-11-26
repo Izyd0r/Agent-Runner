@@ -17,7 +17,8 @@ public static class RunEndpoints
 
             var run = new AgentRun { TaskId = t.Id, AgentId = t.AssigneeAgentId.Value };
             db.Runs.Add(run);
-            t.Status = TaskItemStatus.InProgress;
+            // Columns are user-defined now, so starting a run no longer moves the task anywhere.
+            // On success, AgentRunner moves it to the project's review column (if one is flagged).
             await db.SaveChangesAsync();
             await queue.EnqueueAsync(run.Id);
 

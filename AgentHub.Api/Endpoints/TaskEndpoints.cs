@@ -1,7 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 
-public record TaskInput(string Title, string? Description, string? AssigneeUserId, Guid? AssigneeAgentId);
-public record MoveTask(TaskItemStatus Status, int Position);
+// ColumnId is only used on create (null = first column); moving between columns goes through /move.
+public record TaskInput(string Title, string? Description, string? AssigneeUserId, Guid? AssigneeAgentId, Guid? ColumnId = null);
+public record MoveTask(Guid ColumnId, int Position);
 
 public static class TaskEndpoints
 {
@@ -16,7 +17,12 @@ public static class TaskEndpoints
         g.MapPost("/", async (Guid projectId, TaskInput req, AppDb db) =>
         {
             if (await Validate(projectId, req, db) is { } error) return error;
-            var maxPos = await db.Tasks.Where(t => t.ProjectId == projectId && t.Status == TaskItemStatus.Todo)
+
+            var columns = await ColumnEndpoints.EnsureColumns(db, projectId);
+            var column = req.ColumnId is { } cid ? columns.FirstOrDefault(c => c.Id == cid) : columns[0];
+            if (column is null) return Results.BadRequest("Column not found in this project");
+
+            var maxPos = await db.Tasks.Where(t => t.ColumnId == column.Id)
                 .MaxAsync(t => (int?)t.Position) ?? 0;
             var t = new TaskItem
             {
@@ -25,6 +31,7 @@ public static class TaskEndpoints
                 Description = req.Description,
                 AssigneeUserId = req.AssigneeUserId,
                 AssigneeAgentId = req.AssigneeAgentId,
+                ColumnId = column.Id,
                 Position = maxPos + 1
             };
             db.Tasks.Add(t);
@@ -47,7 +54,9 @@ public static class TaskEndpoints
         {
             var t = await db.Tasks.FirstOrDefaultAsync(x => x.Id == id && x.ProjectId == projectId);
             if (t is null) return Results.NotFound();
-            t.Status = req.Status; t.Position = req.Position;
+            if (!await db.Columns.AnyAsync(c => c.Id == req.ColumnId && c.ProjectId == projectId))
+                return Results.BadRequest("Column not found in this project");
+            t.ColumnId = req.ColumnId; t.Position = req.Position;
             await db.SaveChangesAsync();
             return Results.Ok(t);
         });

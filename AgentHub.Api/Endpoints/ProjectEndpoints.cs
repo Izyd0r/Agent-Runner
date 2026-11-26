@@ -143,5 +143,6 @@ public static class ProjectEndpoints
         proj.MapTaskEndpoints();
         proj.MapAgentEndpoints();
         proj.MapRunEndpoints();
+        proj.MapColumnEndpoints();
     }
 }

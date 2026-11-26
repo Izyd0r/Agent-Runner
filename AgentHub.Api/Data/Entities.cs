@@ -8,7 +8,6 @@ public class AppUser : IdentityUser
 }
 
 public enum ProjectRole { Owner, Member }
-public enum TaskItemStatus { Todo, InProgress, Review, Done }
 public enum RunStatus { Queued, Running, Succeeded, Failed }
 
 public class Project
@@ -30,6 +29,24 @@ public class ProjectMember
     public ProjectRole Role { get; set; }
 }
 
+public class BoardColumn
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public Guid ProjectId { get; set; }
+    public string Name { get; set; } = "";
+    public string Color { get; set; } = "gray"; // Mantine color name
+    public int Position { get; set; }
+    public bool IsReviewTarget { get; set; }    // successful agent runs move their task here
+
+    public static List<BoardColumn> Defaults(Guid projectId) =>
+    [
+        new() { ProjectId = projectId, Name = "To Do",       Color = "gray",   Position = 1 },
+        new() { ProjectId = projectId, Name = "In Progress", Color = "blue",   Position = 2 },
+        new() { ProjectId = projectId, Name = "In Review",   Color = "yellow", Position = 3, IsReviewTarget = true },
+        new() { ProjectId = projectId, Name = "Done",        Color = "teal",   Position = 4 },
+    ];
+}
+
 public class Agent
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -46,7 +63,7 @@ public class TaskItem
     public Guid ProjectId { get; set; }
     public string Title { get; set; } = "";
     public string? Description { get; set; }
-    public TaskItemStatus Status { get; set; } = TaskItemStatus.Todo;
+    public Guid ColumnId { get; set; }
     public int Position { get; set; }
     public string? AssigneeUserId { get; set; }
     public Guid? AssigneeAgentId { get; set; }
